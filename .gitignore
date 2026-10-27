@@ -1,0 +1,19 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Kullaniciya ozel dosyalar
+yedek/
+raporlar/
+playlist.txt
+
+# Playlist dosyalarini kazara commit etmeyi engelle
+*.m3u
+*.m3u8
+!ornek.m3u
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
