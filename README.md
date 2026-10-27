@@ -14,6 +14,11 @@ sayfasından zip olarak indirin. Zip'i bir klasöre çıkarın, kendi listenizi
 `guncel-kanallar.m3u` adıyla yanına koyun ve `IPTV-GUNCELLE.bat` dosyasına
 çift tıklayın.
 
+## Ekran görüntüleri
+
+<img src="docs/terminal-tr.png" alt="Örnek çalışma" width="900">
+<img src="docs/report-tr.png" alt="Güncelleme raporu" width="900">
+
 ## Ne yapıyor?
 
 1. Yanındaki, adında `guncel` geçen playlist dosyasını bulur.
