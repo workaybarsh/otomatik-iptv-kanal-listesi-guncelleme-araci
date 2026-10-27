@@ -7,6 +7,13 @@ kaynağından gelen çalışan linklerle değiştiren küçük bir araç.
 > Bu repo **yalnızca aracı** içerir. İçinde hazır bir yayın listesi / kanal
 > linki yoktur. Kullanıcı kendi M3U dosyasını aracın yanına koyar.
 
+## İndir
+
+En son sürümü [Releases](https://github.com/workaybarsh/otomatik-iptv-kanal-listesi-guncelleme-araci/releases/latest)
+sayfasından zip olarak indirin. Zip'i bir klasöre çıkarın, kendi listenizi
+`guncel-kanallar.m3u` adıyla yanına koyun ve `IPTV-GUNCELLE.bat` dosyasına
+çift tıklayın.
+
 ## Ne yapıyor?
 
 1. Yanındaki, adında `guncel` geçen playlist dosyasını bulur.
