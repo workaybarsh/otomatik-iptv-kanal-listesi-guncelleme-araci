@@ -1,8 +1,9 @@
 # Otomatik IPTV Kanal Listesi Güncelleme Aracı
 
-Türkçe IPTV/M3U listelerini **sırasını ve kanal bilgilerini bozmadan** onaran,
+IPTV/M3U listelerini **sırasını ve kanal bilgilerini bozmadan** onaran,
 çalışmayan yayın linklerini [iptv-org](https://github.com/iptv-org/iptv)
-kaynağından gelen çalışan linklerle değiştiren küçük bir araç.
+kaynağından gelen çalışan linklerle değiştiren küçük bir araç. Her ülkenin
+listesiyle çalışır; yalnızca Türkçe listeler için değildir.
 
 > Bu repo **yalnızca aracı** içerir. İçinde hazır bir yayın listesi / kanal
 > linki yoktur. Kullanıcı kendi M3U dosyasını aracın yanına koyar.
@@ -27,6 +28,10 @@ sayfasından zip olarak indirin. Zip'i bir klasöre çıkarın, kendi listenizi
 4. Sadece **URL satırını** değiştirir; `#EXTINF`, kanal adı, logo, grup,
    `tvg-id` ve kanal sırası aynen kalır.
 5. `yedek/` klasörüne yedek, `raporlar/` klasörüne CSV rapor yazar.
+6. Kaynağın telif (DMCA) veya NSFW nedeniyle kaldırdığı kanalları asla
+   kullanmaz; bu kanalları "atlandı" olarak raporlar ve dokunmaz.
+7. Ham IP, IPTV paneli, paylaşılan token veya proxy gibi görünen aday URL'leri
+   işaretler. Tamamen atlamak için `--no-panel` kullanın.
 
 Varsayılan olarak kanal **silmez**; alternatif bulamazsa kanalı olduğu gibi
 bırakır ve raporda belirtir. `--remove-dead` ile alternatifsizleri çıkarabilirsiniz.
@@ -70,7 +75,7 @@ python kanal_guncelle.py
 
 - `https://iptv-org.github.io/api/streams.json`
 - `https://iptv-org.github.io/api/channels.json`
-- `https://iptv-org.github.io/iptv/countries/tr.m3u`
+- `https://iptv-org.github.io/api/blocklist.json`
 
 Kaynak verisi `%LOCALAPPDATA%\benimliste-guncelle\cache` altında önbelleğe alınır.
 
@@ -90,6 +95,7 @@ Kaynak verisi `%LOCALAPPDATA%\benimliste-guncelle\cache` altında önbelleğe al
 | `--siblings` / `--no-siblings` | Kalite varyantlarını dene (varsayılan: açık) |
 | `--max-candidates N` | Kanal başına en fazla aday link (varsayılan 10) |
 | `--name-match` | Aynı ülkede tam isim eşleşmesi dene (varsayılan: kapalı) |
+| `--no-panel` | Ham IP / panel / paylaşılan token / proxy gibi görünen aday URL'leri atlar |
 | `--refresh-different` | Çalışan ama kaynakta URL'si değişmiş kanalları da günceller |
 | `--remove-dead` | Alternatifi bulunamayanları listeden çıkarır |
 | `--offline` | Kaynağı indirmeden son önbelleği kullanır |

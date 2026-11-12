@@ -86,7 +86,7 @@ PLAYLIST_CONFIG = BASE_DIR / "playlist.txt"
 PLAYLIST_KEYWORD = "guncel"
 STREAMS_API = "https://iptv-org.github.io/api/streams.json"
 CHANNELS_API = "https://iptv-org.github.io/api/channels.json"
-TR_PLAYLIST = "https://iptv-org.github.io/iptv/countries/tr.m3u"
+BLOCKLIST_API = "https://iptv-org.github.io/api/blocklist.json"
 
 DEFAULT_UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -150,6 +150,8 @@ class SourceData:
     by_channel: Dict[str, List[dict]] = field(default_factory=lambda: defaultdict(list))
     # (ulke kodu, normalize edilmis isim) -> kanal ID
     by_name: Dict[Tuple[str, str], str] = field(default_factory=dict)
+    # kanal ID -> sebep ("dmca" / "nsfw")
+    blocked: Dict[str, str] = field(default_factory=dict)
     stream_count: int = 0
     channel_count: int = 0
 
@@ -196,6 +198,22 @@ def is_probably_hls(url: str) -> bool:
     if "youtube.com" in u or "youtu.be" in u or "twitch.tv" in u:
         return False
     return True
+
+
+# Aday URL'lerde ucuncu taraf panel, sizdirilmis CDN token'i veya proxy
+# servisi oldugunu gosteren isaretler.
+SUSPICIOUS_PATTERNS = (
+    ("raw-ip", re.compile(r"^https?://\d{1,3}(?:\.\d{1,3}){3}(?::|/)")),
+    ("xtream-panel", re.compile(r"^https?://[^/]+:\d{2,5}/[^/]+/[^/]+/\d+")),
+    ("panel-path", re.compile(r":\d{2,5}/play/")),
+    ("shared-token", re.compile(r"[?&]token=")),
+    ("proxy-domain", re.compile(r"workers\.dev|\.lol/|\.xyz/|\.top/|\.click/|\.shop/")),
+)
+
+
+def suspicious_reasons(url: str) -> List[str]:
+    """Aday URL'nin supheli isaretlerini dondurur (bos liste = temiz gorunuyor)."""
+    return [name for name, pattern in SUSPICIOUS_PATTERNS if pattern.search(url or "")]
 
 
 def host_of(url: str) -> str:
@@ -537,6 +555,7 @@ def load_source(offline: bool) -> SourceData:
     print("Kaynak verisi aliniyor (iptv-org)...")
     streams = download_json(STREAMS_API, "streams.json", 6, offline)
     channels = download_json(CHANNELS_API, "channels.json", 24 * 30, offline)
+    blocklist = download_json(BLOCKLIST_API, "blocklist.json", 24, offline)
 
     src = SourceData(stream_count=len(streams), channel_count=len(channels))
     for s in streams:
@@ -545,9 +564,20 @@ def load_source(offline: bool) -> SourceData:
             src.by_channel[ch].append(s)
             src.by_channel[ch.lower()].append(s)
 
+    # Kesin kural: kaynagin kaldirdigi (DMCA / NSFW) kanali asla onerme.
+    blocked_ids = set()
+    for entry in blocklist:
+        cid = entry.get("channel")
+        if cid:
+            reason = entry.get("reason") or "blocked"
+            blocked_ids.add(cid)
+            src.blocked[cid] = reason
+            src.blocked[cid.lower()] = reason
+
     src.by_name = build_name_index(channels)
 
     print(f"  Kaynak: {src.stream_count} yayin, {src.channel_count} kanal")
+    print(f"  Engelli: {len(blocked_ids)} kanal (atlanir, asla geri eklenmez)")
     return src
 
 
@@ -621,6 +651,8 @@ def gather_candidates(ch: Channel, src: SourceData, args: argparse.Namespace) ->
     - ayni dizindeki kalite varyantlari (ornek: 1080p -> 720p)
     """
     keys = resolve_keys(ch, src, getattr(args, "name_match", False))
+    # Kesin kural: kaynagin kaldirdigi (DMCA / NSFW) kanali kullanma.
+    keys = [k for k in keys if k not in src.blocked and k.lower() not in src.blocked]
     orig_feed = ch.tvg_id.split("@", 1)[1] if "@" in ch.tvg_id else ""
     seen = set()
     pool: List[dict] = []
@@ -630,6 +662,9 @@ def gather_candidates(ch: Channel, src: SourceData, args: argparse.Namespace) ->
             origin: str = "kaynak", geo: int = 0, feed: str = "") -> None:
         url = (url or "").strip()
         if not url or not is_probably_hls(url):
+            return
+        flags = suspicious_reasons(url)
+        if flags and getattr(args, "no_panel", False):
             return
         key = (url, referrer, user_agent)
         if key in seen:
@@ -647,6 +682,7 @@ def gather_candidates(ch: Channel, src: SourceData, args: argparse.Namespace) ->
             "referrer": referrer,
             "user_agent": user_agent,
             "origin": origin,
+            "suspicious": flags,
         })
 
     # 1) iptv-org kaynagi
@@ -670,7 +706,8 @@ def gather_candidates(ch: Channel, src: SourceData, args: argparse.Namespace) ->
     # Ayni feed once; sonra geo-blocked olmayan, yuksek kalite ve guvenilir kaynak.
     def sort_key(x: dict) -> tuple:
         feed_pen = 0 if (not orig_feed or x["feed"] == orig_feed) else 1
-        return (x["geo"], feed_pen, -x["quality"], -x["trust"])
+        suspicious_pen = 1 if x["suspicious"] else 0
+        return (x["geo"], suspicious_pen, feed_pen, -x["quality"], -x["trust"])
 
     pool.sort(key=sort_key)
     return pool[: max(1, args.max_candidates)]
@@ -682,6 +719,14 @@ def gather_candidates(ch: Channel, src: SourceData, args: argparse.Namespace) ->
 
 
 def process_channel(ch: Channel, src: SourceData, prober: Prober, args: argparse.Namespace) -> Change:
+    base_id = ch.tvg_id.split("@", 1)[0].strip()
+    blocked_reason = src.blocked.get(base_id) or src.blocked.get(base_id.lower())
+    if blocked_reason:
+        return Change(
+            ch, "SKIPPED",
+            note=f"kaynakta engelli ({blocked_reason}); dokunulmadi",
+        )
+
     h: Dict[str, str] = {}
     if ch.referrer:
         h["Referer"] = ch.referrer
@@ -722,7 +767,8 @@ def process_channel(ch: Channel, src: SourceData, prober: Prober, args: argparse
                     ch, "REPLACE", new_url=new_url,
                     new_referrer=cand.get("referrer"),
                     new_user_agent=cand.get("user_agent"),
-                    note=f"kaynakta degismis link ({cand.get('origin', 'kaynak')})",
+                    note=f"kaynakta degismis link ({cand.get('origin', 'kaynak')})"
+                         + (f" [UYARI: supheli URL: {', '.join(cand['suspicious'])}]" if cand.get("suspicious") else ""),
                     old_note=first.note,
                 )
         return Change(ch, "OK", note=first.note)
@@ -754,7 +800,8 @@ def process_channel(ch: Channel, src: SourceData, prober: Prober, args: argparse
                 ch, "REPLACE", new_url=new_url,
                 new_referrer=cand.get("referrer"),
                 new_user_agent=cand.get("user_agent"),
-                note=f"{first.note} -> yeni link calisiyor ({cand.get('origin', 'kaynak')})",
+                note=f"{first.note} -> yeni link calisiyor ({cand.get('origin', 'kaynak')})"
+                     + (f" [UYARI: supheli URL: {', '.join(cand['suspicious'])}]" if cand.get("suspicious") else ""),
                 old_note=first.note,
             )
         errors.append(f"{host_of(new_url)}: {r.note}")
@@ -991,6 +1038,8 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
                    help="Kanal basina denenecek en fazla aday link")
     p.add_argument("--name-match", action="store_true",
                    help="tvg-id bulunamazsa ayni ulkede tam isim eslesmesiyle ara (varsayilan: kapali)")
+    p.add_argument("--no-panel", action="store_true",
+                   help="Ham IP / panel / paylasilan token / proxy gibi gorunen aday URL'leri atla")
     p.add_argument("--offline", action="store_true", help="Kaynak API yerine onbellegi kullan")
     p.add_argument("--insecure", action="store_true", help="SSL hatalarinda sertifika dogrulamasini atla")
     p.add_argument("--no-header", action="store_true", help="#Guncelleme tarihini degistirme")
@@ -1080,9 +1129,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     "REPLACE": "DEGISTI",
                     "DEAD": "OLU",
                     "REMOVE": "KALDIR",
+                    "SKIPPED": "ATLANDI",
                 }.get(change.action, change.action)
                 print(f"[{done:>3}/{total}] {tag:<8} {ch.name}")
-                if change.action in ("REPLACE", "DEAD", "REMOVE"):
+                if change.action in ("REPLACE", "DEAD", "REMOVE", "SKIPPED"):
                     print(f"        eski: {ch.url[:110]}")
                     if change.new_url:
                         print(f"        yeni: {change.new_url[:110]}")
@@ -1105,6 +1155,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     unstable = sum(1 for c in changes if c.action == "UNSTABLE")
     repl = sum(1 for c in changes if c.action == "REPLACE")
     dead = sum(1 for c in changes if c.action in ("DEAD", "REMOVE"))
+    skipped = sum(1 for c in changes if c.action == "SKIPPED")
     print("\n" + "=" * 68)
     print(f"Taranan        : {len(changes)}")
     print(f"Calisan        : {ok}")
@@ -1112,6 +1163,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         print(f"Kararsiz       : {unstable} (link korundu)")
     print(f"Linki degisen  : {repl}")
     print(f"Calismayan     : {dead}")
+    if skipped:
+        print(f"Engelli (atlandi): {skipped}")
     print("=" * 68)
 
     if repl:
@@ -1126,6 +1179,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         print("\nCalismayan / alternatif bulunamayanlar:")
         for c in changes:
             if c.action in ("DEAD", "REMOVE"):
+                print(f"  - {c.channel.name} ({c.channel.tvg_id}) -> {c.note[:140]}")
+
+    if skipped:
+        print("\nKaynakta engelli (asla geri eklenmez):")
+        for c in changes:
+            if c.action == "SKIPPED":
                 print(f"  - {c.channel.name} ({c.channel.tvg_id}) -> {c.note[:140]}")
 
     # Rapor
